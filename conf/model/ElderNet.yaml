@@ -1,0 +1,15 @@
+learning_rate: 0.0001
+name: resnet_plus_fc_nonlinear_normalized #"${model.ssl_method}_${model.net}_head_${model.head}_axis_switch_${augmentation.axis_switch}_rotate_${augmentation.rotation}_win_size${dataloader.epoch_len}"
+net: resnet_plus
+head: fc
+num_layers: 3
+non_linearity: True
+pretrained: True
+ssl_checkpoint_available: True
+ft_checkpoint_available: False
+trained_model_path : N:\Gait-Neurodynamics by Names\Yonatan\SSL\ssl_gait_detection\data\RUSH\logs\models\resnet_plus_fc_nonlinear_normalized_without_grad_accum_06-02-2024_12_31_58.mdl
+warm_up_step: 5
+decay_step: 100
+temperature: 0.1
+patience: 5
+accumulation_steps: 1

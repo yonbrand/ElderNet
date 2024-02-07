@@ -1,0 +1,16 @@
+learning_rate: 0.0001
+name: "${model.ssl_method}_${model.net}_axis_switch_${augmentation.axis_switch}_rotate_${augmentation.rotation}_data_${data.data_name}_win_size${dataloader.epoch_len}"
+net: resnet
+head: none
+num_layers: none
+non_linearity: none
+pretrained: True
+ssl_checkpoint_available: True
+ft_checkpoint_available: False
+trained_model_path : N:\Gait-Neurodynamics by Names\Yonatan\SSL\ssl-unite\data\MobiliseD\Unet\SSL\mtl\mtl_data_RUSH_win_size10_lr_0.0001n_epochs_30_n_sub_1_n_samples_150025-10-2023_10_26_12.mdl
+checkpoint_available: False
+warm_up_step: 5
+decay_step: 100
+temperature: 0.1
+patience: 5
+accumulation_steps: 4

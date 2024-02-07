@@ -1,0 +1,11 @@
+learning_rate: 0.0001
+name: "${model.ssl_method}_data_${data.data_name}_win_size${dataloader.epoch_len}"
+net: unet
+pretrained: False
+ssl_checkpoint_available: False
+trained_model_path : N:\Gait-Neurodynamics by Names\Yonatan\SSL\ssl_gait_detection\data\MobiliseD\Unet\SSL\simclr\simclr_data_RUSH_win_size10_lr_0.0001n_epochs_30_n_sub_1_n_samples_1300_len_10_standardize_True_filtering_True29-10-2023_11_44_11.mdl
+warm_up_step: 5
+decay_step: 100
+temperature: 0.1
+patience: 5
+accumulation_steps: 4

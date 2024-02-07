@@ -1,0 +1,11 @@
+sample_rate: 30
+epoch_len: 10
+standardize_data: True
+bandpass_filtering: False
+#standardize_data_ft: False
+#bandpass_filtering_ft: False
+switch: True
+low_cut: 0.2
+high_cut: 14
+order: 4
+
