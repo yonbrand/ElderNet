@@ -1,4 +1,5 @@
 import os
+import random
 from datetime import datetime, timedelta
 import numpy as np
 import mat73
@@ -41,7 +42,8 @@ WINDOW_OVERLAP_LEN = int(RESAMPLED_HZ * WINDOW_OVERLAP_SEC)  # device ticks
 WINDOW_STEP_LEN = WINDOW_LEN - WINDOW_OVERLAP_LEN  # device ticks
 MIN_DATA = 60 * 60 * 24 * 3 #3 days of recording
 DATAFILES = 'N:\Projects\RUSH\Data\GENEActive_mat\*.mat'
-OUTDIR = 'N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\data'
+OUTDIR = r'N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\data'
+TEST_RATIO = 0.15
 
 file_list = pd.Series(name='file_list', dtype=object)
 
@@ -97,11 +99,12 @@ def process_file(min_data, window_step_len, window_len, out_dir, file):
             file_name_components = file_name.split('-')
             sub_id = file_name_components[0] + '_' + file_name_components[1]
             file2save = sub_id + '.npy'
+            file_path = os.path.join(OUTDIR, file2save)
             np.save(os.path.join(out_dir, file2save), sub_win)
             # Inside the process_file function, replace the print statement with logging
             logging.info(f'subject {file2save} was processed')
 
-            return sync_start_point, sub_id
+            return sync_start_point, file_path
 
 
     except Exception as e:
@@ -133,8 +136,17 @@ if __name__ == '__main__':
         start_point_list.extend(start_points)
         processed_files.extend(sub_ids)
 
-    # Save the processed file list
-    file_list_df = pd.Series(processed_files, name='file_list')
-    file_list_df.to_csv(os.path.join(OUTDIR, 'file_list.csv'), index=False)
+    # Save the start point list
     point_list_df = pd.Series(start_point_list, name='start_point_list')
     point_list_df.to_csv(os.path.join(OUTDIR, 'start_point_list.csv'), index=False)
+
+    # Split the files list to train and test lists
+    sample_size = int(len(processed_files) * TEST_RATIO)
+    test_files = random.sample(processed_files, sample_size)
+    # Create new file lists for train and test
+    train_files = [filename for filename in processed_files if filename not in test_files]
+    train_file_list = pd.DataFrame({'file_list': train_files})
+    test_file_list = pd.DataFrame({'file_list': test_files})
+    # Save file lists
+    train_file_list.to_csv(os.path.join(OUTDIR, 'train', 'file_list.csv'), index=False)
+    test_file_list.to_csv(os.path.join(OUTDIR, 'test', 'file_list.csv'), index=False)
