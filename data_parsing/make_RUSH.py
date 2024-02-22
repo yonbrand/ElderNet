@@ -3,6 +3,7 @@ import random
 from datetime import datetime, timedelta
 import numpy as np
 import mat73
+from scipy.io import loadmat
 from scipy import signal
 import glob
 from tqdm.auto import tqdm
@@ -10,7 +11,6 @@ import pandas as pd
 import multiprocessing
 from functools import partial
 import logging
-# import cProfile
 
 
 # Configure the logging
@@ -33,17 +33,18 @@ def resample_data(data, original_fs, target_fs):
 
 
 
-CHUNK_SIZE = 10 # Number of files to execute in parallel
+CHUNK_SIZE = 1 # Number of files to execute in parallel
 RESAMPLED_HZ = 30# Hz
 WINDOW_SEC = 10  # seconds
 WINDOW_OVERLAP_SEC = 0  # seconds
 WINDOW_LEN = int(RESAMPLED_HZ * WINDOW_SEC)  # device ticks
 WINDOW_OVERLAP_LEN = int(RESAMPLED_HZ * WINDOW_OVERLAP_SEC)  # device ticks
 WINDOW_STEP_LEN = WINDOW_LEN - WINDOW_OVERLAP_LEN  # device ticks
-MIN_DATA = 60 * 60 * 24 * 3 #3 days of recording
-DATAFILES = 'N:\Projects\RUSH\Data\GENEActive_mat\*.mat'
+MIN_DATA = 0 #can be modified to set a threshold for minimal recording duration
+# Path to the folder with demo example of one participant from RUSH Memory and Aging Project (MAP)
+DATAFILES = 'N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\data\mat\*.mat'
 OUTDIR = r'N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\data'
-TEST_RATIO = 0.15
+TEST_RATIO = 0.2
 
 file_list = pd.Series(name='file_list', dtype=object)
 
@@ -75,10 +76,10 @@ def time_synch(StartTime, fs):
 def process_file(min_data, window_step_len, window_len, out_dir, file):
     try:
         if os.path.isfile(file):
-            values = mat73.loadmat(file)
-            values = values['values']
-            startTime = values['startTime']
-            device_fs = values['sampFreq']
+            values = loadmat(file)
+            values = values['values'][0,0]
+            startTime = values['startTime'][0]
+            device_fs = values['sampFreq'][0]
             min_data = device_fs * min_data
             sync_start_point = time_synch(startTime, RESAMPLED_HZ)
             data = values['acc'].astype(float)
@@ -96,8 +97,9 @@ def process_file(min_data, window_step_len, window_len, out_dir, file):
             #
             # # Extract subject id from the file's name
             file_name = file.split('\\')[-1]
-            file_name_components = file_name.split('-')
-            sub_id = file_name_components[0] + '_' + file_name_components[1]
+            # file_name_components = file_name.split('-')
+            sub_id = file_name.split('.')[0]
+            # sub_id = file_name_components[0] + '_' + file_name_components[1]
             file2save = sub_id + '.npy'
             file_path = os.path.join(OUTDIR, file2save)
             np.save(os.path.join(out_dir, file2save), sub_win)
