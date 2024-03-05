@@ -1,0 +1,21 @@
+defaults:
+  - _self_
+  - model: ElderNet
+  - data: RUSH
+  - augmentation: all
+  - task: all
+  - dataloader: ten_sec_no_overlap
+
+
+model:
+  ssl_method : mtl
+  num_epochs : 50
+  lr :  1e-4
+  warm_up_step: 5
+  decay_step: 100
+  patience: 5
+  accumulation_steps: 1
+
+data:
+  data_root: N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\
+

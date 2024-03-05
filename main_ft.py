@@ -142,7 +142,7 @@ def main(cfg):
 
 
 def main_worker(params, cfg):
-    # args = get_execution_arguments()
+    dense_labeling = cfg.data.dense_labeling
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_epochs = params['num_epochs_ft']
     lr = params['lr_ft']

@@ -1,18 +1,17 @@
 import time
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
 import pandas as pd
 import torch
 from torch.utils.data.dataset import Dataset
 from scipy import signal
 from scipy.signal import filtfilt
-from data_loader import transformations
+from dataset import transformations
 import constants
 
 np.random.seed(42)
 
 
-def bandpass_filter(data, low_cut, high_cut, sampling_rate, order):
+def bandpass_filter(data, cfg):
     """Apply a band-pass filter to the input data.
     :param data: NumPy array of shape (n_points, 3)
     :param low_cut: Lower frequency cutoff (Hz)
@@ -22,12 +21,23 @@ def bandpass_filter(data, low_cut, high_cut, sampling_rate, order):
 
     :return: Filtered data
     """
-    nyq = 0.5 * sampling_rate
-    low = low_cut / nyq
-    high = high_cut / nyq
-    b, a = signal.butter(order, [low, high], btype='bandpass')
+    nyq = 0.5 * cfg.dataloader.sampling_rate
+    low = cfg.dataloader.low_cut / nyq
+    high = cfg.dataloader.high_cut / nyq
+    b, a = signal.butter(cfg.dataloader.order, [low, high], btype='bandpass')
     filtered_data = filtfilt(b, a, data, axis=0)
     return filtered_data
+
+def reshape_data(data):
+    """
+    Flat the data to be in the shape of (n,3)
+    :param data: data in the shape of (n, window_size+1, 3)
+    :return: the reshaped_data + vector of the std for each window
+    """
+    data_new = data[:, :-1, :]  # remove the std
+    data_std = data[:, -1, np.newaxis]  # add a new axis
+    data_flat = data_new.reshape(-1, 3)
+    return data_flat, data_std
 
 def standardize(data):
     mean = np.mean(data, axis=0, keepdims=True)
@@ -35,8 +45,6 @@ def standardize(data):
     acc_standardized = (data - mean) / std
     return acc_standardized
 
-
-# START OF DATA CLASS
 def convert_y_label(batch, label_pos):
     row_y = [item[1 + label_pos] for item in batch]
     master_y = torch.cat(row_y)
@@ -152,7 +160,6 @@ def weighted_epoch_sample(data_with_std, num_sample=400):
         sampled_data[ii, :] = ori_data[idx, :, :]
     return sampled_data
 
-
 def remove_non_wear_time(acceleration_data, window_size=(60 * 30 * 30), threshold_std=0.01):
     # Calculate the number of samples and segments
     n_samples = acceleration_data.shape[0]
@@ -185,71 +192,16 @@ def remove_non_wear_time(acceleration_data, window_size=(60 * 30 * 30), threshol
     # Apply the final mask to the acceleration data
     return acceleration_data[final_mask]
 
-class BandpassFilter(object):
-    """Bandpass filtering with butterworth filter
-    """
-    def __init__(self, low_cut, high_cut, sampling_rate, order):
-        self.low_cut = low_cut
-        self.high_cut = high_cut
-        self.sampling_rate = sampling_rate
-        self.order = order
-
-    def __call__(self, sample):
-        nyq = 0.5 * self.sampling_rate
-        low = self.low_cut / nyq
-        high = self.high_cut / nyq
-        b, a = signal.butter(self.order, [low, high], btype='bandpass')
-        filtered_data = filtfilt(b, a, sample, axis=2)
-        return filtered_data
-
-
-class BandpassFilterWindow(object):
-    """Bandpass filtering with butterworth filter
-    """
-    def __init__(self, low_cut, high_cut, sampling_rate, order):
-        self.low_cut = low_cut
-        self.high_cut = high_cut
-        self.sampling_rate = sampling_rate
-        self.order = order
-
-    def __call__(self, sample):
-        nyq = 0.5 * self.sampling_rate
-        low = self.low_cut / nyq
-        high = self.high_cut / nyq
-        b, a = signal.butter(self.order, [low, high], btype='bandpass')
-        filtered_data = filtfilt(b, a, sample)
-        return filtered_data
-
-
-class StandardizeData(object):
-    """Standardize the data to be zero-mean with std of 1
-    """
-    def __call__(self, sample):
-        mean = np.mean(sample, axis=2, keepdims=True)
-        std = np.std(sample, axis=2, keepdims=True)
-        acc_standardized = (sample - mean) / std
-        return acc_standardized
-
-
-class StandardizeDataWindow(object):
-    """Standardize the data to be zero-mean with std of 1
-    """
-    def __call__(self, sample):
-        mean = np.mean(sample, axis=1, keepdims=True)
-        std = np.std(sample, axis=1, keepdims=True)
-        acc_standardized = (sample - mean) / std
-        return acc_standardized
 
 
 class SSL_dataset:
     def __init__(
-        self,
-        data_root,
-        file_list_path,
-        cfg,
-        params,
-        transform=None,
-        shuffle=False,
+            self,
+            data_root,
+            file_list_path,
+            cfg,
+            transform=None,
+            shuffle=False,
     ):
         """
         Args:
@@ -269,9 +221,9 @@ class SSL_dataset:
         self.file_list = file_list_df["file_list"].to_list()
         self.data_root = data_root
         self.cfg = cfg
-        self.params = params
         self.transform = transform
         self.shuffle = shuffle
+        self.window_size = cfg.dataloader.epoch_len * cfg.dataloader.sampling_rate
 
     def __len__(self):
         return len(self.file_list)
@@ -284,28 +236,26 @@ class SSL_dataset:
         file_to_load = self.file_list[idx]
         X = np.load(file_to_load, allow_pickle=True)
 
+        # Preprocess the data
+        if self.cfg.dataloader.bandpass_filtering or self.cfg.dataloader.standardize:
+            num_windows = X.shape[0]
+            # Reshape the data to be (n,3)
+            X, X_std = reshape_data(X)
+            if self.cfg.dataloader.bandpass_filtering:
+                X = bandpass_filter(X, self.cfg)
+            if self.cfg.dataloader.standardize:
+                X = standardize(X)
+            X = X.reshape(num_windows, self.window_size, 3)
+            X = np.concatenate((X, X_std), axis=1)
+
         # transpose axes if ordered different from the original paper
         if X.shape[1] != 3:
             X = np.transpose(X, (0, 2, 1))
-
         # sample windows according to the std of the windows
-        X = weighted_epoch_sample(X, num_sample=self.params['num_samples'])
-
-
-        if self.cfg.dataloader.bandpass_filtering:
-            filter = BandpassFilter(self.cfg.dataloader.low_cut, self.cfg.dataloader.high_cut,
-                                    self.cfg.dataloader.sample_rate, self.cfg.dataloader.order)
-            X = filter(X)
-
-
-        if self.cfg.dataloader.standardize_data:
-            scaler = StandardizeData()
-            X = scaler(X)
+        X = weighted_epoch_sample(X, num_sample=self.cfg.dataloader.num_samples)
 
         if self.cfg.model.ssl_method == 'mtl':
             X, labels = generate_labels(X, self.shuffle, self.cfg)
-
-            # X = X.half() # convert to torch.float16 to reduce memory
 
             if self.transform:
                 X = self.transform(X)
@@ -328,90 +278,6 @@ class SSL_dataset:
             X = torch.stack([view1, view2])
             return X
 
-class Normalized_dataset:
-    def __init__(
-        self,
-        data_root,
-        file_list_path,
-        cfg,
-        params,
-        transform=None,
-        shuffle=False,
-    ):
-        """
-        Args:
-            data_root (string): directory containing all data files
-            file_list_path (string): file list
-            cfg (dict): config
-            params: dictionary of hyperparameters
-            shuffle (bool): whether permute subject data
-
-
-        Returns:
-            data : transformed sample
-            labels (dict) : labels for avalaible transformations
-        """
-
-        file_list_df = pd.read_csv(file_list_path)
-        self.file_list = file_list_df["file_list"].to_list()
-        self.data_root = data_root
-        self.cfg = cfg
-        self.params = params
-        self.transform = transform
-        self.shuffle = shuffle
-        self.window_size = cfg.dataloader.epoch_len * cfg.dataloader.sample_rate
-
-    def __len__(self):
-        return len(self.file_list)
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-
-        # idx starts from zero
-        file_to_load = self.file_list[idx]
-        X = np.load(file_to_load, allow_pickle=True)
-
-        num_windows = X.shape[0]
-        X_new = X[:, :-1, :]  # remove the std
-        X_std = X[:, -1, np.newaxis]  # add a new axis
-        X_flat = X_new.reshape(-1, 3)
-        X_norm = (X_flat - X_flat.mean(axis=0)) / X_flat.std(axis=0)
-        X_norm = X_norm.reshape(num_windows, self.window_size, 3)
-        X = np.concatenate((X_norm, X_std), axis=1)
-        # transpose axes if ordered different from the original paper
-        if X.shape[1] != 3:
-            X = np.transpose(X, (0, 2, 1))
-
-        # sample windows according to the std of the windows
-        X = weighted_epoch_sample(X, num_sample=self.params['num_samples'])
-
-
-        if self.cfg.model.ssl_method == 'mtl':
-            X, labels = generate_labels(X, self.shuffle, self.cfg)
-
-            # X = X.half() # convert to torch.float16 to reduce memory
-
-            if self.transform:
-                X = self.transform(X)
-
-            return (
-                X,
-                labels[:, constants.TIME_REVERSAL_POS],
-                labels[:, constants.SCALE_POS],
-                labels[:, constants.PERMUTATION_POS],
-                labels[:, constants.TIME_WARPED_POS],
-            )
-
-        elif self.cfg.model.ssl_method == 'simclr':
-            X = np.array(X)
-            X = torch.Tensor(X)
-            # Apply the transformation twice to create two augmented views
-            view1 = self.transform(X)
-            view2 = self.transform(X)
-            # Stack the two views to create a single sample with 2 views
-            X = torch.stack([view1, view2])
-            return X
 
 
 class NormalDataset(Dataset):
@@ -471,13 +337,9 @@ class NormalDataset(Dataset):
             pid = np.NaN
 
         if self.cfg.dataloader.bandpass_filtering_ft:
-            filter = BandpassFilterWindow(self.cfg.dataloader.low_cut, self.cfg.dataloader.high_cut,
-                                    self.cfg.dataloader.sample_rate, self.cfg.dataloader.order)
-            sample = filter(sample)
-
+            sample = bandpass_filter(sample)
         if self.cfg.dataloader.standardize_data_ft:
-            scaler = StandardizeDataWindow()
-            sample = scaler(sample)
+            sample = standardize(sample)
 
         sample = torch.Tensor(sample)
 
