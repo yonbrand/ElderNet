@@ -59,8 +59,7 @@ def evaluate_model(model, data_loader, device, cfg):
             my_X, aot_y, scale_y, permute_y, time_w_y = set_up_data4train(
                 my_X, aot_y, scale_y, permute_y, time_w_y, device
             )
-            # if cfg.model.net == 'unet':
-            #     my_X = torch.unsqueeze(my_X, 1).to(device)
+
             aot_y_pred, scale_y_pred, permute_y_pred, time_w_h_pred = model(
                 my_X
             )
@@ -167,25 +166,34 @@ def compute_loss(
     scale_loss = 0
     time_w_loss = 0
 
+
     if cfg.task.time_reversal:
-        total_loss += entropy_loss_fn(aot_y_pred, aot_y)
+        aot_loss = entropy_loss_fn(aot_y_pred, aot_y)
+        total_loss += aot_loss
         total_acc += compute_acc(aot_y_pred, aot_y)
         total_task += 1
+        aot_loss = aot_loss.item()
 
     if cfg.task.permutation:
-        total_loss += entropy_loss_fn(permute_y_pred, permute_y)
+        permute_loss = entropy_loss_fn(permute_y_pred, permute_y)
+        total_loss += permute_loss
         total_acc += compute_acc(permute_y_pred, permute_y)
         total_task += 1
+        permute_loss = permute_loss.item()
 
     if cfg.task.scale:
-        total_loss += entropy_loss_fn(scale_y_pred, scale_y)
+        scale_loss = entropy_loss_fn(scale_y_pred, scale_y)
+        total_loss += scale_loss
         total_acc += compute_acc(scale_y_pred, scale_y)
         total_task += 1
+        scale_loss = scale_loss.item()
 
     if cfg.task.time_warped:
-        total_loss += entropy_loss_fn(time_w_h_pred, time_w_y)
+        time_w_loss = entropy_loss_fn(time_w_h_pred, time_w_y)
+        total_loss += time_w_loss
         total_acc += compute_acc(time_w_h_pred, time_w_y)
         total_task += 1
+        time_w_loss = time_w_loss.item()
 
     return (
         total_loss / total_task,
@@ -317,7 +325,7 @@ def main(cfg):
     early_stopping = EarlyStopping(
         patience=cfg.model.patience, path=model_path, verbose=True
     )
-    accumulation_steps = cfg.model.accumulation_steps
+    accumulation_steps = cfg.model.accumulation_steps # Gradient accumulation
     scaler = torch.cuda.amp.GradScaler(enabled=True)
     for epoch in range(num_epochs):
 
@@ -335,8 +343,6 @@ def main(cfg):
                 my_X, aot_y, scale_y, permute_y, time_w_y, device)
             optimizer.zero_grad()
             with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=True):
-                # if cfg.model.net == 'unet':
-                #     my_X = torch.unsqueeze(my_X, 1).to(device)
 
                 model = model.to(device)
                 aot_y_pred, scale_y_pred, permute_y_pred, time_w_h_pred = model(

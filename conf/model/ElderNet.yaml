@@ -1,5 +1,4 @@
-learning_rate: 0.0001
-name: resnet_plus_fc_nonlinear_normalized #"${model.ssl_method}_${model.net}_head_${model.head}_axis_switch_${augmentation.axis_switch}_rotate_${augmentation.rotation}_win_size${dataloader.epoch_len}"
+name: "${model.ssl_method}_${model.net}_pretrained_${model.pretrained}_head_${model.head}_nonlinearity_${model.non_linearity}_nLayers_${model.num_layers}"
 net: ElderNet
 head: fc
 num_layers: 3

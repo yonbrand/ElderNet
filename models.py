@@ -9,7 +9,6 @@ import torch.nn.functional as F
 ####################################################################################################################
 # This implementation is based on the code of  Nikolas Adaloglou: https://theaisummer.com/simclr/
 
-
 class ContrastiveLoss(nn.Module):
    """
    Vanilla Contrastive loss, also called InfoNceLoss as in SimCLR paper
@@ -51,6 +50,8 @@ class ContrastiveLoss(nn.Module):
        all_losses = -torch.log(nominator / torch.sum(denominator, dim=1))
        loss = torch.sum(all_losses) / (2 * self.batch_size)
        return loss
+
+####################################################################################################################
 
 
 class Classifier(nn.Module):
