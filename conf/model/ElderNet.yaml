@@ -6,4 +6,4 @@ non_linearity: True
 pretrained: True
 ssl_checkpoint_available: False
 ft_checkpoint_available: False
-trained_model_path : N:\Gait-Neurodynamics by Names\Yonatan\SSL\ssl_gait_detection\data\RUSH\logs\models\resnet_plus_fc_nonlinear_normalized_without_grad_accum_06-02-2024_12_31_58.mdl
+trained_model_path : N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\logs\models\mtl_ElderNet_pretrained_True_head_fc_nonlinearity_True_nLayers_3_07-03-2024_17_42_01.mdl #N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\logs\models\SimCLR_ElderNet_pretrained_True_head_fc_nonlinearity_True_nLayers_3_07-03-2024_15_48_44.mdl #N:\Gait-Neurodynamics by Names\Yonatan\SSL\ssl_gait_detection\data\RUSH\logs\models\resnet_plus_fc_nonlinear_normalized_without_grad_accum_06-02-2024_12_31_58.mdl

@@ -1,6 +1,6 @@
 name: "${model.ssl_method}_${model.net}_pretrained_${model.pretrained}"
-net: resnet
-pretrained: True
-ssl_checkpoint_available: True
+net: Resnet
+pretrained: False
+ssl_checkpoint_available: False
 ft_checkpoint_available: False
-trained_model_path : N:\Gait-Neurodynamics by Names\Yonatan\SSL\ssl-unite\data\MobiliseD\Unet\SSL\mtl\mtl_data_RUSH_win_size10_lr_0.0001n_epochs_30_n_sub_1_n_samples_150025-10-2023_10_26_12.mdl
+trained_model_path : N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\logs\models\mtl_Resnet_pretrained_True_07-03-2024_17_27_22.mdl

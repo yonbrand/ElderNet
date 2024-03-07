@@ -1,7 +1,7 @@
 sampling_rate: 30
 epoch_len: 10
 num_subjects: 4
-num_samples: 1500
+num_samples: 100
 bandpass_filtering: False
 standardize: True
 standardize_data_ft: False

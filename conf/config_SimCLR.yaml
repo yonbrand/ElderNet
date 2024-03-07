@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - model: resnet
+  - model: ElderNet
   - data: RUSH
   - augmentation: all
   - task: all
@@ -8,13 +8,13 @@ defaults:
 
 
 model:
-  ssl_method : mtl
-  num_epochs : 6
+  ssl_method : SimCLR
+  num_epochs : 50
   lr :  1e-4
   warm_up_step: 5
   patience: 5
   accumulation_steps: 1
+  temperature: 0.1
 
 data:
   data_root: N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\
-

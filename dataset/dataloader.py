@@ -62,6 +62,9 @@ def subject_collate(batch):
 
     return torch.cat(data), pid
 
+def subject_collate_simclr(batch):
+    return torch.cat(batch)
+
 def subject_collate_mtl(batch):
     data = [item[0] for item in batch]
     data = torch.cat(data)
@@ -268,7 +271,7 @@ class SSL_dataset:
                 labels[:, constants.TIME_WARPED_POS],
             )
 
-        elif self.cfg.model.ssl_method == 'simclr':
+        elif self.cfg.model.ssl_method == 'SimCLR':
             X = np.array(X)
             X = torch.Tensor(X)
             # Apply the transformation twice to create two augmented views

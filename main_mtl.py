@@ -246,7 +246,8 @@ def main(cfg):
     ####################################
     # Instantiate a network architecture
     if cfg.model.net == 'ElderNet':
-        model = getattr(models, cfg.model.net)(main_trunk=Resnet(),cfg=cfg, is_mtl=True)
+        feature_extractor = Resnet().feature_extractor
+        model = getattr(models, cfg.model.net)(feature_extractor, cfg=cfg, is_mtl=True)
     else:
         model = getattr(models, cfg.model.net)(is_mtl=True)
 
@@ -255,7 +256,10 @@ def main(cfg):
         # Use the model from the UKB paper
         if not cfg.model.ssl_checkpoint_available:
             pretrained_model = utils.get_sslnet(pretrained=True)
-            model = ElderNet(pretrained_model, cfg, is_mtl=True)
+            feature_extractor = pretrained_model.feature_extractor
+            model = Resnet(feature_extractor=feature_extractor, is_mtl=True)
+            if cfg.model.net == 'ElderNet':
+                model = ElderNet(feature_extractor, cfg, is_mtl=True)
         # Use a pretrained model of your own
         else:
             load_weights(cfg.model.trained_model_path, model, device)

@@ -230,7 +230,9 @@ class Resnet(nn.Module):
         n_channels=3,
         resnet_version=1,
         epoch_len=10,
+        feature_extractor=nn.Sequential(),
         is_mtl=False,
+        is_simclr=False,
         is_eva=False
     ):
         super(Resnet, self).__init__()
@@ -280,7 +282,7 @@ class Resnet(nn.Module):
                 (256, 5, 2, 5, 4, 0),
             ]  # smaller resnet
         in_channels = n_channels
-        feature_extractor = nn.Sequential()
+        self.feature_extractor = feature_extractor
         for i, layer_params in enumerate(cgf):
             (
                 out_channels,
@@ -290,7 +292,7 @@ class Resnet(nn.Module):
                 downfactor,
                 downorder,
             ) = layer_params
-            feature_extractor.add_module(
+            self.feature_extractor.add_module(
                 f"layer{i+1}",
                 Resnet.make_layer(
                     in_channels,
@@ -304,9 +306,11 @@ class Resnet(nn.Module):
             )
             in_channels = out_channels
 
-        self.feature_extractor = feature_extractor
+
         self.is_mtl = is_mtl
+        self.is_simclr = is_simclr
         self.is_eva = is_eva
+
         if self.is_mtl:
             self.aot_h = Classifier(
                 input_size=out_channels, output_size=output_size
@@ -319,15 +323,15 @@ class Resnet(nn.Module):
             )
             self.time_w_h = Classifier(
                 input_size=out_channels, output_size=output_size
-
             )
+
+        elif self.is_simclr:
+            self.classifier = Classifier(input_size=out_channels, output_size=50)
+
         elif self.is_eva:
             self.classifier = EvaClassifier(
                 input_size=out_channels, output_size=output_size
             )
-
-        else:
-            self.classifier = Classifier(input_size=out_channels, output_size=output_size)
 
         weight_init(self)
 
@@ -402,17 +406,18 @@ class Resnet(nn.Module):
             permute_y = self.permute_h(feats.view(x.shape[0], -1))
             time_w_h = self.time_w_h(feats.view(x.shape[0], -1))
             return aot_y, scale_y, permute_y, time_w_h
-        else:
-            y = self.classifier(feats.view(x.shape[0], -1))
-            return y
+        elif self.is_simclr:
+            return self.classifier(feats.view(x.shape[0], -1))
+        elif self.is_eva:
+            return self.classifier(feats.view(x.shape[0], -1))
 
 
 class Unet(nn.Module):
-    # Input shape: (n_windows, 3, window_size)
-    def __init__(self, cfg, is_eva=False):
+    def __init__(self, as_head=False, is_mtl=False, is_simclr=False, is_eva=False):
         super().__init__()
-        self.as_head = cfg.model.net == 'ElderNet' #indicate if the Unet model used alone or as a head of the Resnet model
-        self.is_mtl = cfg.ssl_method == 'mtl'
+        self.as_head = as_head #indicate if the Unet model used alone or as a head of the Resnet model
+        self.is_mtl = is_mtl
+        self.is_simclr = is_simclr
         self.is_eva = is_eva
 
         self.conv1_1 = nn.Conv1d(in_channels=3, out_channels=64, kernel_size=8)
@@ -441,6 +446,7 @@ class Unet(nn.Module):
         self.fc = nn.Linear(300,50)
 
         if self.as_head:
+            self.conv1_1 = nn.Conv1d(in_channels=1, out_channels=64, kernel_size=8)
             self.fc1 = nn.Linear(1024, 512)
             self.fc2 = nn.Linear(512, 128)
             self.fc3 = nn.Linear(128, 50)
@@ -448,7 +454,7 @@ class Unet(nn.Module):
         self.drop1 = nn.Dropout1d(p=0.2)
         self.drop2 = nn.Dropout1d(p=0.5)
 
-        if self.is_mtl:
+        if self.is_mtl and not self.as_head:
             self.aot_h = Classifier(
                 input_size=50, output_size=2
             )
@@ -465,6 +471,8 @@ class Unet(nn.Module):
         # Indicate if we are in evaluation mode (and then add a classification head)
         if self.is_eva:
             self.classifier = Classifier(50, 2)
+
+        weight_init(self)
 
     def forward(self, x):
         pad_x = nn.ReflectionPad1d((3, 4))(x)
@@ -520,13 +528,15 @@ class Unet(nn.Module):
         else:
             out = self.fc(conv1_6)
 
-        if self.is_mtl:
+        if self.is_mtl and not self.as_head:
             aot_y = self.aot_h(out)
             scale_y = self.scale_h(out)
             permute_y = self.permute_h(out)
             time_w_h = self.time_w_h(out)
-
             return aot_y, scale_y, permute_y, time_w_h
+
+        elif self.is_simclr:
+            return out
 
         elif self.is_eva:
             out = self.classifier(out)
@@ -537,19 +547,20 @@ class Unet(nn.Module):
 
 
 class ElderNet(nn.Module):
-    def __init__(self, main_trunk, cfg,  linear_model_input_size=1024,
-                 linear_model_output_size=50, is_mtl=False, is_eva=False, is_dense=False):
+    def __init__(self, feature_extractor, cfg,  linear_model_input_size=1024,
+                 linear_model_output_size=50, is_mtl=False, is_simclr=False, is_eva=False, is_dense=False):
         super(ElderNet, self).__init__()
         # Load the pretrained layers without classifier
-        self.feature_extractor = main_trunk.feature_extractor
+        self.feature_extractor = feature_extractor
         self.is_mtl = is_mtl # multy task learning
+        self.is_simclr = is_simclr
         self.is_eva = is_eva #evaluating mode (fine-tuning)
         self.is_dense = is_dense #dense labeling
         # Freeze the pretrained layers
         if not self.is_eva:
             for param in self.feature_extractor.parameters():
                 param.requires_grad = False
-        # Add the SmallModel
+        # Add the small model
         self.head = cfg.model.head
 
         # Option 1: FC layers
@@ -557,7 +568,7 @@ class ElderNet(nn.Module):
             self.fc = LinearLayers(linear_model_input_size, linear_model_output_size, cfg.model.non_linearity)
         # Option 2: adding the unet layers
         elif self.head == 'unet':
-            self.unet = Unet(cfg, self.is_eva)
+            self.unet = Unet(as_head=True,is_eva=self.is_eva, is_mtl=self.is_mtl, is_simclr=self.is_simclr)
 
         if self.is_mtl:
             self.aot_h = Classifier(
@@ -586,6 +597,7 @@ class ElderNet(nn.Module):
             representation = self.fc(features.view(x.shape[0], -1))
         elif self.head == 'unet':
             features = torch.transpose(features, 2, 1)
+            # features =  features.view(x.shape[0], -1)
             representation = self.unet(features)
 
         if self.is_mtl:
@@ -600,7 +612,7 @@ class ElderNet(nn.Module):
             logits = self.classifier(representation)
             return logits
 
-        else:
+        elif self.is_simclr:
             return representation
 
 
