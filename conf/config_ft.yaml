@@ -1,17 +1,17 @@
 defaults:
   - _self_
-  - model: resnet_plus
-  - data: MobiliseD
+  - model: ElderNet
   - augmentation: all
   - dataloader: ten_sec_no_overlap
 
 model:
   ssl_method: mtl
-  output_folder: ResnetPlus\SSL\mtl\fc\overlap_train\final #path that will be added to the log_path to create a folder for the ft results
-
+  num_epochs : 50
+  lr :  1e-4
+  batch_size : 100
+  patience: 5
 
 data:
-  data_root: N:\Gait-Neurodynamics by Names\Yonatan\Moblise-D\parsed_data\OAs\10secNoOverlap\WithoutPreprocess\final\train_dense
-  log_path: N:\Gait-Neurodynamics by Names\Yonatan\SSL\ssl_gait_detection\data\MobiliseD
-  name: MobiliseD_OAs
+  data_root: N:\Gait-Neurodynamics by Names\Yonatan\Moblise-D\parsed_data\OAs\10secNoOverlap\WithoutPreprocess\final\train
+  log_path: N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\MobiliseD
   dense_labeling: False

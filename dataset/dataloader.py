@@ -282,36 +282,19 @@ class SSL_dataset:
             return X
 
 
-
-class NormalDataset(Dataset):
+class FT_Dataset(Dataset):
     def __init__(self,
                  X,
                  y=None,
-                 pid=None,
                  name="",
                  cfg=None,
                  transform=None,
-                 transpose_channels_first=False,
                  verbose=True):
 
-        self.X = X.astype(
-            "f4"
-        )  # PyTorch defaults to float32
-
-        if transpose_channels_first:
-            self.X = np.transpose(self.X, (0, 2, 1))
-
-
-        if y is not None:
-            self.y = torch.tensor(y)
-        else:
-            self.y = None
-
-        self.pid = pid
-        # self.network = network
+        self.X = X
+        self.y = y
         self.cfg = cfg
         self.transform = transform
-
 
         if verbose:
             print(f"{name} set sample count: {len(self.X)}")
@@ -324,31 +307,13 @@ class NormalDataset(Dataset):
             idx = idx.tolist()
 
         sample = self.X[idx, :]
-
-        # # The Unet architecture demand 4D tensor for input, i.e., additional channel to indicate grayscale image (2d image)
-        # if self.network == 'Unet':
-        #     sample = torch.unsqueeze(sample, 0)
-
-        if self.y is not None:
-            y = self.y[idx]
-        else:
-            y = np.NaN
-
-        if self.pid is not None:
-            pid = self.pid[idx]
-        else:
-            pid = np.NaN
-
-        if self.cfg.dataloader.bandpass_filtering_ft:
-            sample = bandpass_filter(sample)
-        if self.cfg.dataloader.standardize_data_ft:
-            sample = standardize(sample)
-
+        y = self.y[idx]
         sample = torch.Tensor(sample)
 
         if self.transform is not None:
             sample = self.transform(sample)
 
-        return sample, y, pid
+
+        return sample, y
 
 

@@ -1,36 +1,123 @@
 import os
 import hydra
-import pickle
 import numpy as np
+import pickle
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-import matplotlib as mpl
-
-mpl.rcParams['agg.path.chunksize'] = 1000000000
-mpl.use('TkAgg')
-
-from torchvision import transforms
-
-from fine_tuning import GaitDetectorSSL
-import postprocessing
-from postprocessing import check_performance_post
 import constants
-from data_loader.transformations import RotationAxis, RandomSwitchAxis
-
-from sklearn.metrics import roc_curve, precision_recall_curve
-from sklearn.metrics import roc_auc_score, average_precision_score
-
-from datetime import datetime
-
-now = datetime.now()
+import postprocessing
 
 import warnings
-
 warnings.filterwarnings("ignore")
 
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+from torchvision import transforms
+from dataset.transformations import RotationAxis, RandomSwitchAxis
+from dataset.dataloader import FT_Dataset
+from utils import EarlyStopping
 
+from datetime import datetime
+now = datetime.now()
+
+from sklearn.model_selection import StratifiedGroupKFold, GroupShuffleSplit
+from sklearn.metrics import roc_curve, precision_recall_curve
+from sklearn.metrics import roc_auc_score, average_precision_score
+from torch.utils.data import DataLoader
+from models import Resnet, ElderNet
+from utils import load_weights
+import models
+import utils
+from tqdm import tqdm
+
+
+def check_performance_post(labels, predictions):
+    """Check the performance of the model after the post-processing stage.
+
+           Parameters:
+           - labels: Numpy array of shape (n_points)
+           - predictions: Numpy array of shape (n_points)
+
+           Returns:
+           - accuracy, specificity, recall, precision, F1Score
+           """
+    tp = np.sum(((predictions == labels) & (labels == 1)))
+    tn = np.sum(((predictions == labels) & (labels == 0)))
+    fp = np.sum(((predictions != labels) & (labels == 0)))
+    fn = np.sum(((predictions != labels) & (labels == 1)))
+
+    accuracy = 100 * ((tp + tn) / (tp + tn + fp + fn))
+    specificity = 100 * (tn / (1 + tn + fp))
+    recall = 100 * ((1+tp) / (1 + tp + fn))
+    precision = 100 * ((1+tp) / (1 + tp + fp))
+    F1Score = 2 * (precision * recall) / (precision + recall)
+
+    return np.round(accuracy, 2), np.round(specificity, 2), np.round(recall, 2), np.round(precision, 2), np.round(
+        F1Score, 2)
+
+def predict(model, data_loader, device):
+    """
+    Iterate over the dataloader and do prediction with a pytorch model.
+
+    :param nn.Module model: pytorch Module
+    :param DataLoader data_loader: pytorch dataloader
+    :param device: pytorch map device
+
+    :return: true labels, model predictions, pids
+    :rtype: (np.ndarray, np.ndarray, np.ndarray)
+    """
+
+    predictions_list = []
+    true_list = []
+    model.eval()
+
+    for i, (x, y) in enumerate(tqdm(data_loader, mininterval=60)):
+        with torch.inference_mode():
+            x = x.to(device, dtype=torch.float)
+            logits = model(x)
+            probs = F.softmax(logits, dim=1)
+            preds = probs[:,1] #gait probabilities
+            y = torch.argmax(y, dim=1)
+            true_list.append(y)
+            predictions_list.append(preds.cpu())
+
+    true_list = torch.cat(true_list)
+    predictions_list = torch.cat(predictions_list)
+
+    return true_list.numpy(), predictions_list.numpy()
+
+
+def evaluate_model(model, val_loader, device, loss_fn):
+    model.eval()
+    losses = []
+    acces = []
+    for i, (x, y) in enumerate(val_loader):
+        with torch.no_grad():
+            x = x.to(device, dtype=torch.float)
+            true_y = y.to(device, dtype=torch.long)
+
+            logits = model(x)
+            loss = loss_fn(logits.float(), true_y.float())
+
+            probs = F.softmax(logits, dim=1)
+            pred_y = torch.argmax(probs, dim=1)
+
+            val_acc = torch.sum(pred_y == true_y[:, 1])
+            val_acc = val_acc / (list(pred_y.size())[0])
+
+            losses.append(loss.cpu().detach())
+            acces.append(val_acc.cpu().detach())
+    losses = np.array(losses)
+    acces = np.array(acces)
+    return np.mean(losses), np.mean(acces)
+
+
+def shufflegroupkfold(x, y, groups, n_splits=5):
+    sgkf = StratifiedGroupKFold(n_splits=n_splits)
+    labels = np.argmax(y, axis=1)
+    for i, (train_index, test_index) in enumerate(sgkf.split(x, labels, groups)):
+        print(f"Fold {i}:")
+        yield train_index, test_index
 
 def set_seed(my_seed=0, device='cuda'):
     random_seed = my_seed
@@ -40,156 +127,57 @@ def set_seed(my_seed=0, device='cuda'):
         torch.cuda.manual_seed_all(random_seed)
 
 
-# def get_execution_arguments():
-#     parser = argparse.ArgumentParser()
-#
-#     parser.add_argument("-config", "--configuration",
-#                         help="running configuration type - initialize \ preparation \ modeling \ postprocessing ")
-#     parser.add_argument("-input_path", "--input_path", help="Path for loading input files")
-#     parser.add_argument("-model_path", "--model_path", help="Path for loading the trained model")
-#     parser.add_argument("-output_path", "--output_path", help="Path for storing processing and modeling related files")
-#     parser.add_argument("-run_mode", "--run_mode", help="CV/train/test")
-#     parser.add_argument("-net", "--net", help="Name of the network architecture: Resnet/Unet")
-#     args = parser.parse_args()
-#
-#     print(
-#         "configuration: {}\n input_path: {}\n  model_path: {}\n output_path: {}\n run_mode: {}\n network: {}\n".format(
-#             args.configuration,
-#             cfg.data.data_root,
-#             args.model_path,
-#             output_path,
-#             args.run_mode,
-#             args.net
-#         ))
-#
-#     return args
-
-
-def create_folders(path):
-    '''
-    Create new folders in which the new output files will be stored.
-    :param path: input path of the current project (e.g., 'Mobilise-D')
-    :return: folder to save the output files
-    '''
-    if not os.path.isdir(os.path.join(path)):
-        os.mkdir(os.path.join(path))
-
-
-def reset_weights(m):
-    '''
-      Try resetting model weights to avoid
-      weight leakage.
-    '''
-    for layer in m.children():
-        if hasattr(layer, 'reset_parameters'):
-            print(f'Reset trainable parameters of layer = {layer}')
-            layer.reset_parameters()
-
-
-def objective(trial, input_path, output_path, device, model_path):
-    params = {
-        'batch_size': trial.suggest_int('batch_size', 100, 100),
-        'num_epochs': trial.suggest_int('num_epochs', 100, 100),
-        'patience': trial.suggest_int('patience', 5, 5),
-        'lr': trial.suggest_loguniform('lr', 1e-4, 1e-4),
-        'n_layers': trial.suggest_int('n_layers', 1, 6)
-    }
-
-    # Load the data (resample to 30 hz and divided into windows of 10 sec)
-    X_train = pickle.load(open(os.path.join(input_path, 'WindowsData.p'), 'rb'))
-    y_train = pickle.load(open(os.path.join(input_path, 'WindowsLabels.p'), 'rb'))
-    groups_train = pickle.load(open(os.path.join(input_path, 'WindowsSubjects.p'), 'rb'))
-
-    # Convert labels to one-hot encoded array
-    one_hot_labels = np.zeros((len(y_train), 2), dtype=int)
-    one_hot_labels[np.arange(len(y_train)), y_train.squeeze().astype(int)] = 1
-
-    weight_path = os.path.join(output_path, 'weights.pt')
-    gd = GaitDetectorSSL(weights_path=weight_path, device=device, verbose=True, model_path=model_path)
-    f1_score = gd.cross_val(X_train, one_hot_labels, params, groups_train, return_f1=True)
-    return f1_score
-
-
-def objective(trial, cfg):
-    lr_choices = [1e-1, 1e-2, 1e-3, 1e-4]
-    params = {
-        'num_epochs': trial.suggest_int('num_epochs', 10, 100),
-        'lr': trial.suggest_categorical('lr', lr_choices),
-        'num_subjects': 4,  # trial.suggest_int('num_subjects', 3,8),
-        'num_samples': 1500,  # 100 * trial.suggest_int('num_samples', 5,25),
-        'patience': 5  # trial.suggest_int('num_samples', 5, 10)
-    }
-    best_f1 = main_worker(params, cfg)
-
-    return best_f1
-
-
 @hydra.main(config_path="conf", config_name="config_ft", version_base='1.1')
 def main(cfg):
-    # study = optuna.create_study(direction="maximize")
-    # study.optimize(lambda trial: objective(trial,cfg) , n_trials=10)
-
-    params = {
-        'num_epochs_ft': 30,  # trial.suggest_int('num_epochs', 10, 100),
-        'lr_ft': 1e-4,  # trial.suggest_categorical('lr', lr_choices),
-        'batch_size_ft': 100,
-        'patience': 5,
-        'num_layers': 3,
-        'non_linearity': True
-    }
-
-    main_worker(params, cfg)
-
-
-def main_worker(params, cfg):
-    dense_labeling = cfg.data.dense_labeling
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_epochs = params['num_epochs_ft']
-    lr = params['lr_ft']
-    batch_size = params['batch_size_ft']
-    window_size = cfg.dataloader.epoch_len * cfg.dataloader.sample_rate
-    switch_aug = cfg.augmentation.axis_switch
-    rotation_aug = cfg.augmentation.rotation
-    if switch_aug and rotation_aug:
-        my_transform = transforms.Compose(
-            [RandomSwitchAxis(), RotationAxis()]
-        )
-    elif switch_aug:
-        my_transform = RandomSwitchAxis()
-    elif rotation_aug:
-        my_transform = RotationAxis()
-    else:
-        my_transform = None
+    num_epochs = cfg.model.num_epochs
+    lr = cfg.model.lr
+    # dense_labeling = cfg.data.dense_labeling
+    batch_size = cfg.model.batch_size
+    # window_size = cfg.dataloader.epoch_len * cfg.dataloader.sample_rate
 
-    log_dir = cfg.data.log_path
+    augmentations = []
+    if cfg.augmentation.axis_switch:
+        augmentations.append(RandomSwitchAxis())
+
+    if cfg.augmentation.rotation:
+        augmentations.append(RotationAxis())
+
+    my_transform = transforms.Compose(augmentations) if augmentations else None
+
+    main_log_dir = cfg.data.log_path
     dt_string = now.strftime("%d-%m-%Y_%H_%M_%S")
-    # Directory for the SSL model used for FT
-    log_ssl_dir = os.path.join(log_dir, cfg.model.output_folder)
-
-    if not os.path.isdir(log_ssl_dir):
-        os.mkdir(log_ssl_dir)
+    run_name = cfg.model.name \
+               + "_lr_" \
+               + str(lr) \
+               + "_batchSize_" \
+               + str(batch_size) \
+               + '_n_epochs_' \
+               + str(num_epochs) \
+               + dt_string
 
     output_path = os.path.join(
-        log_ssl_dir,
-        # "FT_"
-        # + 'fclayers_'
-        # + str(cfg.model.num_layers)
-        # + '_nonlinearity_'
-        # + str(cfg.model.non_linearity)+
-        "_lr_"
-        + str(lr)
-        + 'n_epochs_'
-        + str(num_epochs)
-        + '_batch_size_'
-        + str(batch_size)
-        + '_'
-        + dt_string
+        main_log_dir,
+        "models",
+        run_name
     )
 
     if not os.path.isdir(output_path):
         os.mkdir(output_path)
+    # Path to save the model weights
+    weights_path = os.path.join(output_path, 'weights.pt')
 
-    seeds = [0, 42, 100]
+
+    # Load the data (resample to 30 hz and divided into windows of 10 sec)
+    X = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsData.p'), 'rb'))
+    Y = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsLabels.p'), 'rb'))
+    groups = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsSubjects.p'), 'rb'))
+
+    # Convert labels to one-hot encoded array
+    one_hot_labels = np.zeros((len(Y), 2), dtype=int)
+    one_hot_labels[np.arange(len(Y)), Y.squeeze().astype(int)] = 1
+
+    seeds = constants.SEEDS
     # List of performance metrics names
     performance_metrics_names = ['accuracy', 'specificity', 'recall', 'precision', 'F1score']
     # Initialize a dictionary to store the arrays
@@ -202,81 +190,173 @@ def main_worker(params, cfg):
     }
     for seed in range(len(seeds)):
         set_seed(my_seed=seeds[seed], device=device)
-        weight_path = os.path.join(output_path, 'weights.pt')
-        # Creating a gait detection (=gd) instance
-        gd = GaitDetectorSSL(cfg=cfg, params=params, weights_path=weight_path,
-                             device=device, verbose=True, n_jobs=1, transform=my_transform)
-        # Load the data (resample to 30 hz and divided into windows of 10 sec)
-        X_train = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsData.p'), 'rb'))
-        y_train = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsLabels.p'), 'rb'))
-        groups_train = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsSubjects.p'), 'rb'))
+        labels = []
+        predictions = []
+        for train_idxs, test_idxs in shufflegroupkfold(X, one_hot_labels, groups):
+            X_train, Y_train, groups_train = X[train_idxs], one_hot_labels[train_idxs], groups[train_idxs]
+            X_test, Y_test, groups_test = X[test_idxs], one_hot_labels[test_idxs], groups[test_idxs]
 
-        # Convert labels to one-hot encoded array
-        one_hot_labels = np.zeros((len(y_train), 2), dtype=int)
-        one_hot_labels[np.arange(len(y_train)), y_train.squeeze().astype(int)] = 1
-        model, labels, predictions = gd.cross_val(X_train, one_hot_labels, params, groups_train)
+            # prepare training and validation sets
+            folds = GroupShuffleSplit(
+                1, test_size=0.2, random_state=41
+            ).split(X_train, Y_train, groups=groups_train)
+            train_idx, val_idx = next(folds)
 
-        # Save the trained model as the gd object
-        with open(os.path.join(output_path, 'model' + str(seed) + '.p'), 'wb') as OutputFile:
-            pickle.dump(model, OutputFile)
-        # Save the labels and predictions
-        with open(os.path.join(output_path, 'labels' + str(seed) + '.p'), 'wb') as OutputFile:
-            pickle.dump(labels, OutputFile)
-        with open(os.path.join(output_path, 'predictions' + str(seed) + '.p'), 'wb') as OutputFile:
-            pickle.dump(predictions, OutputFile)
+            x_train = X_train[train_idx]
+            x_val = X_train[val_idx]
 
-        # Load relevant data
-        StdIndex = pickle.load(open(os.path.join(cfg.data.data_root, 'StdIndex.p'), 'rb'))
-        inclusion_idx = pickle.load(open(os.path.join(cfg.data.data_root, 'InclusionIndex.p'), 'rb'))
-        labels = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsLabels.p'), 'rb'))
-        labels = labels.squeeze()  # Reshape to be in the same shape as the prediction vector
-        subjects_win = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsSubjects.p'), 'rb'))
-        all_subjects = pickle.load(open(os.path.join(cfg.data.data_root, 'ResampledSubjects.p'), 'rb'))
+            y_train = Y_train[train_idx]
+            y_val = Y_train[val_idx]
 
-        # Sort the labels and the subjects according to the test indices
-        test_indices = model.cv_results['test_indices']
-        test_indices = np.concatenate(test_indices)
-        labels = labels[test_indices]
 
-        # Rearrange the subjects according to the test indices
-        subjects = np.repeat(subjects_win[test_indices], window_size)  # reshape from windows to samples
-        all_subjects[inclusion_idx.astype(bool)] = subjects
+            train_dataset = FT_Dataset(x_train,
+                                          y_train,
+                                          name="training",
+                                          cfg=cfg,
+                                          transform=my_transform)
+            val_dataset = FT_Dataset(x_val,
+                                        y_val,
+                                        name="validation",
+                                        cfg=cfg,
+                                        transform=my_transform)
 
-        predictions = predictions[:, 1]
+            test_dataset = FT_Dataset(X_test,
+                                        Y_test,
+                                        name="prediction",
+                                        cfg=cfg,
+                                      transform=my_transform)
 
-        # Convert from labels/predictions per window to sample-level prediction
-        final_labels = postprocessing.reconstruct_windows(labels, window_size, inclusion_idx, StdIndex)
-        final_labels = final_labels.squeeze()
-        final_preds = postprocessing.reconstruct_windows(predictions, window_size, inclusion_idx, StdIndex)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True
+            )
 
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=batch_size,
+                shuffle=False
+            )
+
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=batch_size,
+                shuffle=False
+            )
+
+            # balancing to 90% notwalk, 10% walk
+            walk = np.sum(y_train[:,1])
+            notwalk = np.sum(y_train[:, 0])
+            class_weights = [(walk * 9.0) / notwalk, 1.0]
+            #############################################
+            # Set the Model
+            #############################################
+            # Instantiate a network architecture every fold (to prevent weight leakage between folds)
+            if cfg.model.net == 'ElderNet':
+                feature_extractor = Resnet().feature_extractor
+                model = getattr(models, cfg.model.net)(feature_extractor, cfg=cfg, is_eva=True)
+            else:
+                model = getattr(models, cfg.model.net)(is_eva=True)
+
+            # Choose if to use an already pretrained model (such as the UKB model)
+            if cfg.model.pretrained:
+                # Use the model from the UKB paper
+                if not cfg.model.ssl_checkpoint_available:
+                    pretrained_model = utils.get_sslnet(pretrained=True)
+                    feature_extractor = pretrained_model.feature_extractor
+                    model = Resnet(feature_extractor=feature_extractor, is_eva=True)
+                    if cfg.model.net == 'ElderNet':
+                        model = ElderNet(feature_extractor, cfg, is_eva=True)
+                # Use a pretrained model of your own
+                else:
+                    load_weights(cfg.model.trained_model_path, model, device)
+
+            model.to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr, amsgrad=True)
+
+            # Define the loss function
+            if class_weights is not None:
+                class_weights = torch.FloatTensor(class_weights).to(device)
+                loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+            else:
+                loss_fn = nn.CrossEntropyLoss()
+
+            early_stopping = EarlyStopping(patience=cfg.model.patience, path=weights_path, verbose=True)
+            print('Training SSL')
+            for epoch in range(num_epochs):
+                model.train()
+                train_losses = []
+                train_acces = []
+                for i, (x, y) in enumerate(tqdm(train_loader)):
+                    x.requires_grad_(True)
+                    x = x.to(device, dtype=torch.float)
+                    true_y = y.to(device, dtype=torch.long)
+
+                    optimizer.zero_grad()
+
+                    logits = model(x)
+                    loss = loss_fn(logits.float(), true_y.float())
+                    loss.backward()
+                    optimizer.step()
+
+                    # Convert logits to probabilities using softmax activation function
+                    probs = F.softmax(logits, dim=1)
+                    # Extract the gait probabilities
+                    pred_y = torch.argmax(probs, dim=1)
+                    train_acc = torch.sum(pred_y == true_y[:, 1])
+                    train_acc = train_acc / (pred_y.size()[0])
+
+                    train_losses.append(loss.cpu().detach())
+                    train_acces.append(train_acc.cpu().detach())
+
+                val_loss, val_acc = evaluate_model(model, val_loader, device, loss_fn)
+
+                epoch_len = len(str(num_epochs))
+                print_msg = (
+                        f"[{epoch:>{epoch_len}}/{num_epochs:>{epoch_len}}] | "
+                        + f"train_loss: {np.mean(train_losses):.3f} | "
+                        + f"train_acc: {np.mean(train_acces):.3f} | "
+                        + f"val_loss: {val_loss:.3f} | "
+                        + f"val_acc: {val_acc:.2f}"
+                )
+
+                print(print_msg)
+                early_stopping(val_loss, model)
+                if early_stopping.early_stop:
+                    print('Early stopping')
+                    print(f'SSLNet weights saved to {weights_path}')
+                    break
+
+            # Predict the tset fold
+            Y_test_true, Y_test_pred = predict(model, test_loader, device)
+            # Append the predictions of the current test fold
+            labels.append(Y_test_true)
+            predictions.append(Y_test_pred)
+
+        labels = np.concatenate(labels)
+        predictions = np.concatenate(predictions)
         # Calculate the ROC curve
-        fpr, tpr, thresholds = roc_curve(final_labels, final_preds)
-        roc_auc = roc_auc_score(final_labels, final_preds)  # area under the curve
+        fpr, tpr, thresholds = roc_curve(labels, predictions)
+        roc_auc = roc_auc_score(labels, predictions)  # area under the curve
         curves_arrays['roc'][seed] = (fpr, tpr, roc_auc)
         # Calculate the PR curve
-        precision, recall, thresholds = precision_recall_curve(final_labels, final_preds)
-        auprc = average_precision_score(final_labels, final_preds)  # area under the curve
+        precision, recall, thresholds = precision_recall_curve(labels, predictions)
+        auprc = average_precision_score(labels, predictions)  # area under the curve
         curves_arrays['pr'][seed] = (recall, precision, auprc)
         # Calculate the recall-precision-f1score curve
         eps = 1e-15
         f1 = (2 * precision * recall) / (precision + recall + eps)
         intersection = np.where(precision > recall)[0][0]
         curves_arrays['performance'][seed] = (thresholds, precision, recall, f1, intersection)
-
-        if len(np.unique(final_preds)) > 2:
-            classification_threshold = 0.5
-
-            # Round predictions to get binary classification
-            final_preds = np.where(final_preds > classification_threshold, 1, 0)
-
-        # Postprocessing of the predictions
-        # post_preds = postprocessing.post_processing(round_predictions, __MERGE_DISTANCE__, __SAMPLING_RATE__, __MIN_BOUT__)
+        # Round predictions
+        final_preds = np.round(predictions)
 
         # Compute the performance's metrics after post-processing
-        final_labels = final_labels.astype(final_preds.dtype)  # for reliable comparison
+        labels = labels.astype(final_preds.dtype)  # for reliable comparison
         performance_dict['accuracy'][seed], performance_dict['specificity'][seed], performance_dict['recall'][seed], \
         performance_dict['precision'][seed], performance_dict['F1score'][seed] = \
-            check_performance_post(final_labels, final_preds)
+            check_performance_post(labels, final_preds)
+
 
     with open(os.path.join(output_path, 'performance_matrix.p'), 'wb') as OutputFile:
         pickle.dump(performance_dict, OutputFile)
@@ -286,8 +366,10 @@ def main_worker(params, cfg):
     postprocessing.plot_curves_for_seeds(seeds, curves_arrays, output_path, 'roc')
     postprocessing.plot_curves_for_seeds(seeds, curves_arrays, output_path, 'performance')
 
-    return np.mean(performance_dict['F1score'])
 
 
 if __name__ == '__main__':
     main()
+
+
+
