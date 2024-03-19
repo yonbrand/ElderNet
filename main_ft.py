@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import os
 import hydra
 import numpy as np
@@ -5,30 +7,30 @@ import pickle
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-import constants
-import postprocessing
-
-import warnings
-warnings.filterwarnings("ignore")
-
 from torchvision import transforms
-from dataset.transformations import RotationAxis, RandomSwitchAxis
-from dataset.dataloader import FT_Dataset
-from utils import EarlyStopping
-
-from datetime import datetime
-now = datetime.now()
 
 from sklearn.model_selection import StratifiedGroupKFold, GroupShuffleSplit
 from sklearn.metrics import roc_curve, precision_recall_curve
 from sklearn.metrics import roc_auc_score, average_precision_score
 from torch.utils.data import DataLoader
 from models import Resnet, ElderNet
-from utils import load_weights
+
+from dataset.transformations import RotationAxis, RandomSwitchAxis
+from dataset.dataloader import FT_Dataset
+from utils import EarlyStopping, load_weights
+
+from tqdm import tqdm
+
 import models
 import utils
-from tqdm import tqdm
+import constants
+import postprocessing
+
+import warnings
+
+warnings.filterwarnings("ignore")
+
+now = datetime.now()
 
 
 def check_performance_post(labels, predictions):
@@ -48,12 +50,13 @@ def check_performance_post(labels, predictions):
 
     accuracy = 100 * ((tp + tn) / (tp + tn + fp + fn))
     specificity = 100 * (tn / (1 + tn + fp))
-    recall = 100 * ((1+tp) / (1 + tp + fn))
-    precision = 100 * ((1+tp) / (1 + tp + fp))
-    F1Score = 2 * (precision * recall) / (precision + recall)
+    recall = 100 * ((1 + tp) / (1 + tp + fn))
+    precision = 100 * ((1 + tp) / (1 + tp + fp))
+    f1score = 2 * (precision * recall) / (precision + recall)
 
     return np.round(accuracy, 2), np.round(specificity, 2), np.round(recall, 2), np.round(precision, 2), np.round(
-        F1Score, 2)
+        f1score, 2)
+
 
 def predict(model, data_loader, device):
     """
@@ -76,7 +79,7 @@ def predict(model, data_loader, device):
             x = x.to(device, dtype=torch.float)
             logits = model(x)
             probs = F.softmax(logits, dim=1)
-            preds = probs[:,1] #gait probabilities
+            preds = probs[:, 1]  # gait probabilities
             y = torch.argmax(y, dim=1)
             true_list.append(y)
             predictions_list.append(preds.cpu())
@@ -119,7 +122,8 @@ def shufflegroupkfold(x, y, groups, n_splits=5):
         print(f"Fold {i}:")
         yield train_index, test_index
 
-def set_seed(my_seed=0, device='cuda'):
+
+def set_seed(device, my_seed=0):
     random_seed = my_seed
     np.random.seed(random_seed)
     torch.manual_seed(random_seed)
@@ -147,8 +151,7 @@ def main(cfg):
 
     main_log_dir = cfg.data.log_path
     dt_string = now.strftime("%d-%m-%Y_%H_%M_%S")
-    run_name = cfg.model.name \
-               + "_lr_" \
+    run_name = cfg.model.name + "FT_lr_" \
                + str(lr) \
                + "_batchSize_" \
                + str(batch_size) \
@@ -167,15 +170,11 @@ def main(cfg):
     # Path to save the model weights
     weights_path = os.path.join(output_path, 'weights.pt')
 
-
     # Load the data (resample to 30 hz and divided into windows of 10 sec)
-    X = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsData.p'), 'rb'))
-    Y = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsLabels.p'), 'rb'))
-    groups = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsSubjects.p'), 'rb'))
-
-    # Convert labels to one-hot encoded array
-    one_hot_labels = np.zeros((len(Y), 2), dtype=int)
-    one_hot_labels[np.arange(len(Y)), Y.squeeze().astype(int)] = 1
+    X = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsData.p'), 'rb'))  # (n_windows, 3, 300)
+    Y = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsLabels.p'), 'rb'))  # (n_windows,2)
+    # The groups vector indicates the subject_id of each window, which is needed for subject-wise division.
+    groups = pickle.load(open(os.path.join(cfg.data.data_root, 'WindowsSubjects.p'), 'rb'))  # (n_windows,)
 
     seeds = constants.SEEDS
     # List of performance metrics names
@@ -192,9 +191,9 @@ def main(cfg):
         set_seed(my_seed=seeds[seed], device=device)
         labels = []
         predictions = []
-        for train_idxs, test_idxs in shufflegroupkfold(X, one_hot_labels, groups):
-            X_train, Y_train, groups_train = X[train_idxs], one_hot_labels[train_idxs], groups[train_idxs]
-            X_test, Y_test, groups_test = X[test_idxs], one_hot_labels[test_idxs], groups[test_idxs]
+        for train_idxs, test_idxs in shufflegroupkfold(X, Y, groups):
+            X_train, Y_train, groups_train = X[train_idxs], Y[train_idxs], groups[train_idxs]
+            X_test, Y_test, groups_test = X[test_idxs], Y[test_idxs], groups[test_idxs]
 
             # prepare training and validation sets
             folds = GroupShuffleSplit(
@@ -208,22 +207,21 @@ def main(cfg):
             y_train = Y_train[train_idx]
             y_val = Y_train[val_idx]
 
-
             train_dataset = FT_Dataset(x_train,
-                                          y_train,
-                                          name="training",
-                                          cfg=cfg,
-                                          transform=my_transform)
+                                       y_train,
+                                       name="training",
+                                       cfg=cfg,
+                                       transform=my_transform)
             val_dataset = FT_Dataset(x_val,
-                                        y_val,
-                                        name="validation",
-                                        cfg=cfg,
-                                        transform=my_transform)
+                                     y_val,
+                                     name="validation",
+                                     cfg=cfg,
+                                     transform=my_transform)
 
             test_dataset = FT_Dataset(X_test,
-                                        Y_test,
-                                        name="prediction",
-                                        cfg=cfg,
+                                      Y_test,
+                                      name="prediction",
+                                      cfg=cfg,
                                       transform=my_transform)
 
             train_loader = DataLoader(
@@ -245,7 +243,7 @@ def main(cfg):
             )
 
             # balancing to 90% notwalk, 10% walk
-            walk = np.sum(y_train[:,1])
+            walk = np.sum(y_train[:, 1])
             notwalk = np.sum(y_train[:, 0])
             class_weights = [(walk * 9.0) / notwalk, 1.0]
             #############################################
@@ -357,7 +355,6 @@ def main(cfg):
         performance_dict['precision'][seed], performance_dict['F1score'][seed] = \
             check_performance_post(labels, final_preds)
 
-
     with open(os.path.join(output_path, 'performance_matrix.p'), 'wb') as OutputFile:
         pickle.dump(performance_dict, OutputFile)
 
@@ -367,9 +364,5 @@ def main(cfg):
     postprocessing.plot_curves_for_seeds(seeds, curves_arrays, output_path, 'performance')
 
 
-
 if __name__ == '__main__':
     main()
-
-
-

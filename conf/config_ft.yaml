@@ -12,6 +12,6 @@ model:
   patience: 5
 
 data:
-  data_root: N:\Gait-Neurodynamics by Names\Yonatan\Moblise-D\parsed_data\OAs\10secNoOverlap\WithoutPreprocess\final\train
+  data_root: N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\MobiliseD\data #N:\Gait-Neurodynamics by Names\Yonatan\Moblise-D\parsed_data\OAs\10secNoOverlap\WithoutPreprocess\final\train
   log_path: N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\MobiliseD
   dense_labeling: False

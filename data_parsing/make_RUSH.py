@@ -37,9 +37,9 @@ CHUNK_SIZE = 1 # Number of files to execute in parallel
 RESAMPLED_HZ = 30# Hz
 WINDOW_SEC = 10  # seconds
 WINDOW_OVERLAP_SEC = 0  # seconds
-WINDOW_LEN = int(RESAMPLED_HZ * WINDOW_SEC)  # device ticks
-WINDOW_OVERLAP_LEN = int(RESAMPLED_HZ * WINDOW_OVERLAP_SEC)  # device ticks
-WINDOW_STEP_LEN = WINDOW_LEN - WINDOW_OVERLAP_LEN  # device ticks
+WINDOW_LEN = int(RESAMPLED_HZ * WINDOW_SEC)
+WINDOW_OVERLAP_LEN = int(RESAMPLED_HZ * WINDOW_OVERLAP_SEC)
+WINDOW_STEP_LEN = WINDOW_LEN - WINDOW_OVERLAP_LEN
 MIN_DATA = 0 #can be modified to set a threshold for minimal recording duration
 # Path to the folder with demo example of one participant from RUSH Memory and Aging Project (MAP)
 DATAFILES = 'N:\Gait-Neurodynamics by Names\Yonatan\SSL\ElderNet\data\RUSH\data\mat\*.mat'
