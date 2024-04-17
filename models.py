@@ -547,7 +547,7 @@ class Unet(nn.Module):
 
 
 class ElderNet(nn.Module):
-    def __init__(self, feature_extractor, cfg,  linear_model_input_size=1024,
+    def __init__(self, feature_extractor, head='fc', non_linearity=True,  linear_model_input_size=1024,
                  linear_model_output_size=50, is_mtl=False, is_simclr=False, is_eva=False, is_dense=False):
         super(ElderNet, self).__init__()
         # Load the pretrained layers without classifier
@@ -561,11 +561,11 @@ class ElderNet(nn.Module):
             for param in self.feature_extractor.parameters():
                 param.requires_grad = False
         # Add the small model
-        self.head = cfg.model.head
+        self.head = head
 
         # Option 1: FC layers
         if self.head == 'fc':
-            self.fc = LinearLayers(linear_model_input_size, linear_model_output_size, cfg.model.non_linearity)
+            self.fc = LinearLayers(linear_model_input_size, linear_model_output_size, non_linearity)
         # Option 2: adding the unet layers
         elif self.head == 'unet':
             self.unet = Unet(as_head=True,is_eva=self.is_eva, is_mtl=self.is_mtl, is_simclr=self.is_simclr)

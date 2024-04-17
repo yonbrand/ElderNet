@@ -247,7 +247,8 @@ def main(cfg):
     # Instantiate a network architecture
     if cfg.model.net == 'ElderNet':
         feature_extractor = Resnet().feature_extractor
-        model = getattr(models, cfg.model.net)(feature_extractor, cfg=cfg, is_mtl=True)
+        model = getattr(models, cfg.model.net)(feature_extractor, head=cfg.model.head,
+                                               non_linearity=cfg.model.non_linearity, is_eva=True)
     else:
         model = getattr(models, cfg.model.net)(is_mtl=True)
 
