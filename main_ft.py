@@ -265,7 +265,7 @@ def main(cfg):
                     feature_extractor = pretrained_model.feature_extractor
                     model = Resnet(feature_extractor=feature_extractor, is_eva=True)
                     if cfg.model.net == 'ElderNet':
-                        model = ElderNet(feature_extractor, cfg, is_eva=True)
+                        model = ElderNet(feature_extractor, cfg.model.head, is_eva=True)
                 # Use a pretrained model of your own
                 else:
                     load_weights(cfg.model.trained_model_path, model, device)

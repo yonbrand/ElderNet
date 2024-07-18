@@ -6,7 +6,7 @@ defaults:
 
 model:
   ssl_method: mtl
-  num_epochs : 50
+  num_epochs : 5
   lr :  1e-4
   batch_size : 100
   patience: 5
