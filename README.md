@@ -4,7 +4,7 @@
 
 ## Overview
 
-ElderNet is an implementation of the research paper: [Automated Gait Detection in Daily Living Settings from a Wrist-Worn Accelerometer in Older Adults Using Self-Supervised Learning](https://www.researchsquare.com/article/rs-4102403/v1).
+ElderNet is an implementation of the research paper: [Self-supervised learning of wrist-worn daily living accelerometer data improves the automated detection of gait in older adults](https://www.nature.com/articles/s41598-024-71491-3).
 
 This project presents a deep learning approach for gait detection, specifically designed and optimized for older adults, including those with impaired gait. ElderNet utilizes self-supervised learning (SSL) and fine-tuning techniques to achieve accurate gait detection from wrist-worn accelerometer data.
 
